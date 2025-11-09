@@ -135,6 +135,10 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+    ///返回当前运行的task——id作为公有接口。
+    pub fn return_current_task_id(&self) -> usize{
+        self.inner.exclusive_access().current_task
+    }
 }
 
 /// Run the first task in task list.

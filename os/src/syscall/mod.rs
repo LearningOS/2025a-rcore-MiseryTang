@@ -10,7 +10,10 @@
 //! `sys_` then the name of the syscall. You can find functions like this in
 //! submodules, and you should also implement syscalls this way.
 
+
+use crate::{config::MAX_APP_NUM, task::TASK_MANAGER};
 /// write syscall
+
 const SYSCALL_WRITE: usize = 64;
 /// exit syscall
 const SYSCALL_EXIT: usize = 93;
@@ -20,7 +23,7 @@ const SYSCALL_YIELD: usize = 124;
 const SYSCALL_GET_TIME: usize = 169;
 /// trace syscall
 const SYSCALL_TRACE: usize = 410;
-
+pub(crate) static mut SYSCALL_QUANTITY: [[usize; 500]; MAX_APP_NUM] = [[0; 500]; MAX_APP_NUM];
 mod fs;
 mod process;
 
@@ -29,6 +32,7 @@ use process::*;
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
+    unsafe {SYSCALL_QUANTITY[TASK_MANAGER.return_current_task_id()][syscall_id] += 1;}
     match syscall_id {
         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
