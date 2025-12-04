@@ -1,5 +1,5 @@
 //! Process management syscalls
-use crate::task::{change_program_brk, exit_current_and_run_next, suspend_current_and_run_next};
+use crate::task::{TASK_MANAGER, TaskControlBlock, change_program_brk, exit_current_and_run_next, suspend_current_and_run_next};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -27,7 +27,7 @@ pub fn sys_yield() -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    -1
+    TASK_MANAGER.get_current_ppn(crate :: mm :: VirtPageNum::from(_ts as usize));
 }
 
 /// TODO: Finish sys_trace to pass testcases
