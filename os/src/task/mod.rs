@@ -20,8 +20,6 @@ use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
-use riscv::addr::VirtAddr;
-use riscv::paging::PageTableEntry;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
@@ -122,7 +120,8 @@ impl TaskManager {
         let inner = self.inner.exclusive_access();
         inner.tasks[inner.current_task].get_user_token()
     }
-    pub fn get_current_ppn(&self, vpn: VirtPageNum) -> Option<crate::mm::PageTableEntry> {
+    ///获取指定虚拟页号的页表项
+    pub fn get_pte(&self, vpn: VirtPageNum) -> Option<crate::mm::PageTableEntry> {
         let inner = self.inner.exclusive_access();
         inner.tasks[inner.current_task].memory_set.translate(vpn)
     }
