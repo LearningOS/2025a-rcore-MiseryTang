@@ -15,7 +15,6 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
-use crate::mm::VirtPageNum;
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -116,14 +115,9 @@ impl TaskManager {
     }
 
     /// Get the current 'Running' task's token.
-    fn get_current_token(&self) -> usize {
+    pub fn get_current_token(&self) -> usize {
         let inner = self.inner.exclusive_access();
         inner.tasks[inner.current_task].get_user_token()
-    }
-    ///获取指定虚拟页号的页表项
-    pub fn get_pte(&self, vpn: VirtPageNum) -> Option<crate::mm::PageTableEntry> {
-        let inner = self.inner.exclusive_access();
-        inner.tasks[inner.current_task].memory_set.translate(vpn)
     }
     /// Get the current 'Running' task's trap contexts.
     fn get_current_trap_cx(&self) -> &'static mut TrapContext {
@@ -157,6 +151,11 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+    ///获取当前任务号
+    pub fn get_current_task(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        inner.current_task
     }
 }
 
