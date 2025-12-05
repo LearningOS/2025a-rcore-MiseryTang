@@ -98,7 +98,7 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     let mut flag = 1;
     for i in 0.._len{
         TASK_MANAGER.get_current_memset(|memset|{
-            if memset.translate(crate :: mm ::VirtPageNum(_start + i)).is_none() {
+            if let Some(_x) =  memset.translate(crate :: mm ::VirtPageNum(_start + i)) {
                 flag = 0;
             }
         });
