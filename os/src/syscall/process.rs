@@ -85,6 +85,9 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
 // YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
+    if (_port & 0x2 != 0) && (_port & 0x1 == 0) {
+    return -1;
+    }
     if _start & 0xfff != 0 {
         return -1;
     }
