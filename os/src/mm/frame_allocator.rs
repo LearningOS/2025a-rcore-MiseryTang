@@ -57,7 +57,7 @@ impl StackFrameAllocator {
         // trace!("last {} Physical Frames.", self.end - self.current);
     }
     pub fn _full(&self , page_num : usize) -> bool{
-        self.current + page_num >= self.end
+        self.current + page_num > self.end + self.recycled.len()
     }
 }
 impl FrameAllocator for StackFrameAllocator {
