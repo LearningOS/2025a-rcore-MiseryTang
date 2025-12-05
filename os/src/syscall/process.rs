@@ -10,7 +10,7 @@ pub struct TimeVal {
     pub usec: usize,
 }
 /// 全局系统调用计数器：每个任务一个数组，统计每种系统调用的次数
-pub static mut SYSCALL_QUANTITY: [[usize; 512]; 16] = [[0; 512]; 16];
+pub static mut SYSCALL_QUANTITY: [[usize; 512]; 256] = [[0; 512]; 256];
 /// task exits and submit an exit code
 pub fn sys_exit(_exit_code: i32) -> ! {
     trace!("kernel: sys_exit");
