@@ -1,6 +1,6 @@
 //! Process management syscalls
 use crate::{task::{TASK_MANAGER, change_program_brk , exit_current_and_run_next, suspend_current_and_run_next}, timer::get_time};
-use crate::mm::translated_byte_buffer;
+use crate::mm::{translated_byte_buffer, PageTable, VirtAddr, PTEFlags, StepByOne};
 use crate::mm::MapPermission;
 use crate::mm::FRAME_ALLOCATOR;
 #[repr(C)]
@@ -28,7 +28,7 @@ pub fn sys_yield() -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
     let timeval = TimeVal {
         sec: get_time() / 1_000_000,
@@ -40,13 +40,13 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
             core::mem::size_of::<TimeVal>(),
         )
     };
-    let mut _buffer = translated_byte_buffer(
+    let mut buffer = translated_byte_buffer(
         TASK_MANAGER.get_current_token(),
-        _ts as *const u8,
+        ts as *const u8,
         core::mem::size_of::<TimeVal>(),
     );
     let mut offset = 0;
-    for buf in &mut _buffer {
+    for buf in &mut buffer {
         let len = buf.len().min(timeval_bytes.len() - offset);
         buf[..len].copy_from_slice(&timeval_bytes[offset..offset + len]);
         offset += len;
@@ -56,81 +56,122 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 
 /// TODO: Finish sys_trace to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
-pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
+pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
     trace!("kernel: sys_trace");
-    match _trace_request {
+    let token = TASK_MANAGER.get_current_token();
+    let page_table = PageTable::from_token(token);
+
+    match trace_request {
         0 => {
-            let buffer = translated_byte_buffer(
-                TASK_MANAGER.get_current_token(),
-                _id as *const u8,
-                1,
-            );
-            return buffer[0][0] as isize;
-        },
-        1 => {
-            let mut buffer = translated_byte_buffer(
-                TASK_MANAGER.get_current_token(),
-                _id as *const u8,
-                1,
-            );
-            buffer[0][0] = _data as u8;
-            return 0;
+            let va = VirtAddr::from(id);
+            if let Some(pte) = page_table.translate(va.floor()) {
+                let flags = pte.flags();
+                if flags.contains(PTEFlags::V) && flags.contains(PTEFlags::R) && flags.contains(PTEFlags::U) {
+                    let buffer = translated_byte_buffer(token, id as *const u8, 1);
+                    return buffer[0][0] as isize;
+                }
+            }
+            -1
         }
-            
-        2 => unsafe { return SYSCALL_QUANTITY[TASK_MANAGER.get_current_task()][_id] as isize ;},
-        _ => return -1,
+        1 => {
+            let va = VirtAddr::from(id);
+            if let Some(pte) = page_table.translate(va.floor()) {
+                let flags = pte.flags();
+                if flags.contains(PTEFlags::V) && flags.contains(PTEFlags::W) && flags.contains(PTEFlags::U) {
+                    let mut buffer = translated_byte_buffer(token, id as *const u8, 1);
+                    buffer[0][0] = data as u8;
+                    return 0;
+                }
+            }
+            -1
+        }
+        2 => unsafe { SYSCALL_QUANTITY[TASK_MANAGER.get_current_task()][id] as isize },
+        _ => -1,
     }
 }
 
 // YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    if (_port & 0x2 != 0) && (_port & 0x1 == 0) {
-    return -1;
-    }
-    if _start & 0xfff != 0 {
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
+    trace!("kernel: sys_mmap");
+    // Check if start is page aligned
+    if start & 0xfff != 0 {
         return -1;
     }
-    if _port & !0x7 != 0{
+    // Check permissions
+    // port: 1=R, 2=W, 4=X
+    // If port has bits other than 0x7 (R|W|X), it's invalid
+    if port & !0x7 != 0 {
         return -1;
     }
-    if _port & 0x7 == 0{
+    // If port is empty, it's invalid (usually)
+    if port & 0x7 == 0 {
+        return -1;
+    }
+    // Check specific invalid combination: Write but not Read?
+    // The original code had: if (_port & 0x2 != 0) && (_port & 0x1 == 0) { return -1; }
+    // This means if Write is set, Read must also be set.
+    // This is a common restriction in some systems or specific to this lab's requirements.
+    if (port & 0x2 != 0) && (port & 0x1 == 0) {
         return -1;
     }
 
-    let mut flag = 1;
-    for i in 0.._len{
-        TASK_MANAGER.get_current_memset(|memset|{
-            if let Some(_x) =  memset.translate(crate :: mm ::VirtPageNum(_start + i)) {
-                flag = 0;
+    let start_va = VirtAddr::from(start);
+    let end_va = VirtAddr::from(start + len);
+    let start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+
+    // Check if any page in the range is already mapped
+    let mut is_mapped = false;
+    TASK_MANAGER.get_current_memset(|memset| {
+        let mut vpn = start_vpn;
+        while vpn.0 < end_vpn.0 {
+            if memset.translate(vpn).is_some() {
+                is_mapped = true;
+                break;
             }
-        });
-        if flag == 0 {
-            return -1;
+            vpn.step();
         }
-    }
-    if FRAME_ALLOCATOR.exclusive_access()._full(_len/4095 + 1) {
+    });
+    if is_mapped {
         return -1;
     }
-    let port = MapPermission ::from_bits_truncate((((_port & 0x7) << 1) | 0x10) as u8);
-    TASK_MANAGER.get_current_memset(|memset|{
-        memset.insert_framed_area(crate::mm::VirtAddr(_start), crate::mm::VirtAddr(_start + _len), port);
+
+    // Check if we have enough frames
+    // Calculate number of pages needed
+    let pages_needed = end_vpn.0 - start_vpn.0;
+    // Use _full check if it exists, otherwise just trust allocator or check recycled
+    // The user provided code used: FRAME_ALLOCATOR.exclusive_access()._full(_len/4095 + 1)
+    // _len/4095 + 1 is an approximation. Correct is pages_needed.
+    if FRAME_ALLOCATOR.exclusive_access()._full(pages_needed) {
+        return -1;
+    }
+
+    // Convert port to MapPermission
+    // port: 1=R, 2=W, 4=X
+    // MapPermission: R=1<<1, W=1<<2, X=1<<3, U=1<<4
+    // (port & 0x7) << 1 maps 1->2, 2->4, 4->8. Correct.
+    // | 0x10 adds User bit. Correct.
+    let permission = MapPermission::from_bits_truncate(((port as u8 & 0x7) << 1) | 0x10);
+
+    TASK_MANAGER.get_current_memset(|memset| {
+        memset.insert_framed_area(start_va, end_va, permission);
     });
-    return 0
+    0
 }
 
 // YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    let mut x:isize = 0;
-    TASK_MANAGER.get_current_memset(|memset|{
-        
-        x = memset.remove_area_range(crate::mm::VirtAddr(_start), crate::mm::VirtAddr(_start + _len)) as isize;
-    });
-    if x != 1 {
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    trace!("kernel: sys_munmap");
+    if start & 0xfff != 0 {
         return -1;
-    };
-    0
+    }
+    let mut ret = -1;
+    TASK_MANAGER.get_current_memset(|memset| {
+        if memset.remove_area_range(VirtAddr::from(start), VirtAddr::from(start + len)) {
+            ret = 0;
+        }
+    });
+    ret
 }
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {
