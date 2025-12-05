@@ -44,48 +44,67 @@ impl MemorySet {
         /// Remove a specific virtual address range from the memory set.
         /// This will unmap and free frames in [remove_start, remove_end), possibly splitting MapArea.
     pub fn remove_area_range(&mut self, remove_start: VirtAddr, remove_end: VirtAddr) -> bool {
-            let remove_start_vpn = remove_start.floor();
-            let remove_end_vpn = remove_end.ceil();
-            let mut i = 0;
-            let mut changed = false;
-            while i < self.areas.len() {
-                let area = &self.areas[i];
-                let area_start = area.vpn_range.get_start();
-                let area_end = area.vpn_range.get_end();
-                // 判断有无重叠
-                if area_end > remove_start_vpn && area_start < remove_end_vpn {
-                    // 需要处理
-                    let mut to_remove = self.areas.remove(i);
-                    // 1. 先 unmap 要删除的区间
-                    let overlap_start = area_start.max(remove_start_vpn);
-                    let overlap_end = area_end.min(remove_end_vpn);
-                    let mut vpn = overlap_start;
-                    while vpn < overlap_end {
-                        to_remove.unmap_one(&mut self.page_table, vpn);
+        let remove_start_vpn = remove_start.floor();
+        let remove_end_vpn = remove_end.ceil();
+        let mut i = 0;
+        let mut changed = false;
+        while i < self.areas.len() {
+            let area = &self.areas[i];
+            let area_start = area.vpn_range.get_start();
+            let area_end = area.vpn_range.get_end();
+            if area_end > remove_start_vpn && area_start < remove_end_vpn {
+                let mut to_remove = self.areas.remove(i);
+                let overlap_start = area_start.max(remove_start_vpn);
+                let overlap_end = area_end.min(remove_end_vpn);
+                
+                let mut vpn = overlap_start;
+                while vpn < overlap_end {
+                    to_remove.unmap_one(&mut self.page_table, vpn);
+                    vpn.step();
+                }
+
+                if area_start < overlap_start {
+                    let mut left = MapArea::new(
+                        area_start.into(),
+                        overlap_start.into(),
+                        to_remove.map_type,
+                        to_remove.map_perm,
+                    );
+                    let mut vpn = area_start;
+                    while vpn < overlap_start {
+                        if let Some(frame) = to_remove.data_frames.remove(&vpn) {
+                            left.data_frames.insert(vpn, frame);
+                        }
                         vpn.step();
                     }
-                    // 2. 如果前面有剩余，保留 [area_start, overlap_start)
-                    if area_start < overlap_start {
-                        let mut left = to_remove.clone();
-                        left.vpn_range = super::VPNRange::new(area_start, overlap_start);
-                        self.areas.insert(i, left);
-                        i += 1;
-                    }
-                    // 3. 如果后面有剩余，保留 [overlap_end, area_end)
-                    if overlap_end < area_end {
-                        let mut right = to_remove;
-                        right.vpn_range = super::VPNRange::new(overlap_end, area_end);
-                        self.areas.insert(i, right);
-                        i += 1;
-                    }
-                    changed = true;
-                    // 不自增 i，因为 remove 了当前元素，insert 了新元素
-                } else {
+                    self.areas.insert(i, left);
                     i += 1;
                 }
+
+                if overlap_end < area_end {
+                    let mut right = MapArea::new(
+                        overlap_end.into(),
+                        area_end.into(),
+                        to_remove.map_type,
+                        to_remove.map_perm,
+                    );
+                    let mut vpn = overlap_end;
+                    while vpn < area_end {
+                        if let Some(frame) = to_remove.data_frames.remove(&vpn) {
+                            right.data_frames.insert(vpn, frame);
+                        }
+                        vpn.step();
+                    }
+                    self.areas.insert(i, right);
+                    i += 1;
+                }
+                changed = true;
+            } else {
+                i += 1;
             }
-            changed
         }
+        changed
+    }
     /// Create a new empty `MemorySet`.
     pub fn new_bare() -> Self {
         Self {
