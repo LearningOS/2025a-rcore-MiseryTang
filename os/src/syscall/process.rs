@@ -1,6 +1,8 @@
 //! Process management syscalls
 use crate::{task::{TASK_MANAGER, change_program_brk , exit_current_and_run_next, suspend_current_and_run_next}, timer::get_time};
 use crate::mm::translated_byte_buffer;
+use crate::mm::MapPermission;
+use crate::mm::FRAME_ALLOCATOR;
 #[repr(C)]
 #[derive(Debug)]
 pub struct TimeVal {
@@ -63,8 +65,7 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
                 _id as *const u8,
                 1,
             );
-            let offset = (_id as usize) & 0xfff;
-            return buffer[0][offset] as isize;
+            return buffer[0][0] as isize;
         },
         1 => {
             let mut buffer = translated_byte_buffer(
@@ -72,8 +73,7 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
                 _id as *const u8,
                 1,
             );
-            let offset = (_id as usize) & 0xfff;
-            buffer[0][offset] = _data as u8;
+            buffer[0][0] = _data as u8;
             return 0;
         }
             
@@ -85,13 +85,49 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
 // YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    -1
+    if _start & 0xfff != 0 {
+        return -1;
+    }
+    if _port & !0x7 != 0{
+        return -1;
+    }
+    if _port & 0x7 == 0{
+        return -1;
+    }
+
+    let mut flag = 1;
+    for i in 0.._len{
+        TASK_MANAGER.get_current_memset(|memset|{
+            if memset.translate(crate :: mm ::VirtPageNum(_start + i)).is_none() {
+                flag = 0;
+            }
+        });
+        if flag == 0 {
+            return -1;
+        }
+    }
+    if FRAME_ALLOCATOR.exclusive_access()._full(_len/4095 + 1) {
+        return -1;
+    }
+    let port = MapPermission ::from_bits_truncate((((_port & 0x7) << 1) | 0x10) as u8);
+    TASK_MANAGER.get_current_memset(|memset|{
+        memset.insert_framed_area(crate::mm::VirtAddr(_start), crate::mm::VirtAddr(_start + _len), port);
+    });
+    return 0
 }
 
 // YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+    let mut x:isize = 0;
+    TASK_MANAGER.get_current_memset(|memset|{
+        
+        x = memset.remove_area_range(crate::mm::VirtAddr(_start), crate::mm::VirtAddr(_start + _len)) as isize;
+    });
+    if x != 1 {
+        return -1;
+    };
+    0
 }
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {

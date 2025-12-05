@@ -40,6 +40,52 @@ pub struct MemorySet {
 }
 
 impl MemorySet {
+
+        /// Remove a specific virtual address range from the memory set.
+        /// This will unmap and free frames in [remove_start, remove_end), possibly splitting MapArea.
+    pub fn remove_area_range(&mut self, remove_start: VirtAddr, remove_end: VirtAddr) -> bool {
+            let remove_start_vpn = remove_start.floor();
+            let remove_end_vpn = remove_end.ceil();
+            let mut i = 0;
+            let mut changed = false;
+            while i < self.areas.len() {
+                let area = &self.areas[i];
+                let area_start = area.vpn_range.get_start();
+                let area_end = area.vpn_range.get_end();
+                // 判断有无重叠
+                if area_end > remove_start_vpn && area_start < remove_end_vpn {
+                    // 需要处理
+                    let mut to_remove = self.areas.remove(i);
+                    // 1. 先 unmap 要删除的区间
+                    let overlap_start = area_start.max(remove_start_vpn);
+                    let overlap_end = area_end.min(remove_end_vpn);
+                    let mut vpn = overlap_start;
+                    while vpn < overlap_end {
+                        to_remove.unmap_one(&mut self.page_table, vpn);
+                        vpn.step();
+                    }
+                    // 2. 如果前面有剩余，保留 [area_start, overlap_start)
+                    if area_start < overlap_start {
+                        let mut left = to_remove.clone();
+                        left.vpn_range = super::VPNRange::new(area_start, overlap_start);
+                        self.areas.insert(i, left);
+                        i += 1;
+                    }
+                    // 3. 如果后面有剩余，保留 [overlap_end, area_end)
+                    if overlap_end < area_end {
+                        let mut right = to_remove;
+                        right.vpn_range = super::VPNRange::new(overlap_end, area_end);
+                        self.areas.insert(i, right);
+                        i += 1;
+                    }
+                    changed = true;
+                    // 不自增 i，因为 remove 了当前元素，insert 了新元素
+                } else {
+                    i += 1;
+                }
+            }
+            changed
+        }
     /// Create a new empty `MemorySet`.
     pub fn new_bare() -> Self {
         Self {
@@ -233,6 +279,8 @@ impl MemorySet {
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.page_table.translate(vpn)
     }
+        /// Remove a specific virtual address range from the memory set.
+        /// This will unmap and free frames in [remove_start, remove_end), possibly splitting MapArea.
     /// shrink the area to new_end
     #[allow(unused)]
     pub fn shrink_to(&mut self, start: VirtAddr, new_end: VirtAddr) -> bool {
@@ -270,6 +318,19 @@ pub struct MapArea {
     map_type: MapType,
     map_perm: MapPermission,
 }
+
+impl Clone for MapArea {
+    fn clone(&self) -> Self {
+        Self {
+            vpn_range: self.vpn_range.clone(),
+            data_frames: BTreeMap::new(), // 不复制 frame，只复制区间和属性
+            map_type: self.map_type,
+            map_perm: self.map_perm,
+        }
+    }
+}
+    /// Remove a specific virtual address range from the memory set.
+    /// This will unmap and free frames in [remove_start, remove_end), possibly splitting MapArea.
 
 impl MapArea {
     pub fn new(

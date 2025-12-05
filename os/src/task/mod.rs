@@ -17,6 +17,7 @@ mod task;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use crate::mm::MemorySet;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
@@ -156,6 +157,15 @@ impl TaskManager {
     pub fn get_current_task(&self) -> usize {
         let inner = self.inner.exclusive_access();
         inner.current_task
+    }
+    ///获取当前memset
+    pub fn get_current_memset<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut MemorySet) -> R,
+    {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        f(&mut inner.tasks[cur].memory_set)
     }
 }
 

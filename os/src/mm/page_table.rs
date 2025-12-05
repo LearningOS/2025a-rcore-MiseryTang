@@ -159,23 +159,39 @@ impl PageTable {
 
 /// Translate&Copy a ptr[u8] array with LENGTH len to a mutable u8 Vec through page table
 pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
+    // 根据 token 构造页表对象
     let page_table = PageTable::from_token(token);
+    // 起始虚拟地址
     let mut start = ptr as usize;
+    // 结束虚拟地址（不包含 end）
     let end = start + len;
+    // 存放所有物理切片的 Vec
     let mut v = Vec::new();
+    // 循环处理每一页
     while start < end {
+        // 当前页的起始虚拟地址
         let start_va = VirtAddr::from(start);
+        // 当前虚拟页号
         let mut vpn = start_va.floor();
+        // 通过页表转换得到物理页号
         let ppn = page_table.translate(vpn).unwrap().ppn();
+        // 虚拟页号自增，指向下一页
         vpn.step();
+        // 计算本页的结束虚拟地址
         let mut end_va: VirtAddr = vpn.into();
+        // 如果跨页，取区间尾部最小值，防止越界
         end_va = end_va.min(VirtAddr::from(end));
+        // 判断本页是否到页末
         if end_va.page_offset() == 0 {
+            // 到页末，取从页内偏移到页尾的所有字节
             v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..]);
         } else {
+            // 没到页末，取从页内偏移到 end_va 的所有字节
             v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..end_va.page_offset()]);
         }
+        // 更新 start，进入下一个页或区间
         start = end_va.into();
     }
+    // 返回所有物理切片
     v
 }
