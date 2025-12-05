@@ -10,7 +10,7 @@ pub struct TimeVal {
     pub usec: usize,
 }
 /// 全局系统调用计数器：每个任务一个数组，统计每种系统调用的次数
-pub static mut SYSCALL_QUANTITY: [[usize; 256]; 16] = [[0; 256]; 16];
+pub static mut SYSCALL_QUANTITY: [[usize; 512]; 16] = [[0; 512]; 16];
 /// task exits and submit an exit code
 pub fn sys_exit(_exit_code: i32) -> ! {
     trace!("kernel: sys_exit");
@@ -165,11 +165,25 @@ pub fn sys_munmap(start: usize, len: usize) -> isize {
     if start & 0xfff != 0 {
         return -1;
     }
-    let mut ret = -1;
+    let start_va = VirtAddr::from(start);
+    let end_va = VirtAddr::from(start + len);
+    let start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+
+    let mut ret = 0;
     TASK_MANAGER.get_current_memset(|memset| {
-        if memset.remove_area_range(VirtAddr::from(start), VirtAddr::from(start + len)) {
-            ret = 0;
+        // 1. Check if all pages in range are mapped
+        let mut vpn = start_vpn;
+        while vpn.0 < end_vpn.0 {
+            if memset.translate(vpn).is_none() {
+                ret = -1;
+                return;
+            }
+            vpn.step();
         }
+
+        // 2. If check passed, remove the range
+        memset.remove_area_range(start_va, end_va);
     });
     ret
 }
